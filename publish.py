@@ -1,5 +1,6 @@
 import requests
 import os
+import re
 
 print("=" * 50)
 print("🚀 PUBLISHER STARTED")
@@ -40,35 +41,72 @@ def get_empty_row():
         return None
     
     rows = response.json().get("results", [])
+    print(f"📊 Найдено строк в таблице: {len(rows)}")
     
     for row in rows:
         status = row.get("Status")
+        print(f"  - Строка ID {row.get('id')}: Status = '{status}'")
         if status is None or status == "":
-            print(f"✅ Найдена строка ID: {row.get('id')}")
-            print(f"📝 Текст: {row.get('Start text', '')[:80]}...")
+            print(f"✅ Найдена пустая строка ID: {row.get('id')}")
             return row
     
     print("✅ Нет строк для обработки")
     return None
 
-def update_status(row_id, status):
-    """Обновляет статус строки"""
+def update_row(row_id, data):
+    """Обновляет данные строки"""
     url = f"{API_URL}{row_id}/"
-    response = requests.patch(url, headers=HEADERS, json={"Status": status})
-    return response.status_code == 200
+    response = requests.patch(url, headers=HEADERS, json=data)
+    return response
+
+def call_ai(start_text):
+    """Отправляет запрос в Cloudfleur AI (пока заглушка)"""
+    print("🤖 Генерирую SEO-контент...")
+    
+    # Временная заглушка (без реального API)
+    # Потом заменишь на реальный запрос к Cloudfleur
+    
+    return {
+        "title": f"🔥 {start_text[:50]}",
+        "body_text": f"Feeling like a little piece of summer! ☀️\n\n{start_text[:150]}...\n\nPure beach happiness! ✨\n\nPerfect fit, nothing digs in, nothing slips — just pure happiness!",
+        "slug": re.sub(r'[^a-z0-9-]', '-', start_text[:50].lower().replace(' ', '-')),
+        "tags": "bikini, summer, beach, swimwear, fashion, vacation"
+    }
 
 def main():
-    # Находим строку
+    # Находим строку для обработки
     row = get_empty_row()
     if not row:
         print("🏁 Завершаем работу")
         return
     
-    # Обновляем статус на "выполнено"
-    if update_status(row["id"], "выполнено"):
-        print(f"✅ Статус строки {row['id']} обновлён на 'выполнено'")
+    start_text = row.get("Start text", "")
+    print(f"📝 Текст для обработки: {start_text[:80]}...")
+    
+    # 1. Получаем данные от ИИ
+    ai_data = call_ai(start_text)
+    print(f"✅ Сгенерирован Title: {ai_data['title'][:50]}...")
+    
+    # 2. Обновляем таблицу
+    print("📝 Обновляю Baserow...")
+    
+    update_data = {
+        "Title": ai_data['title'],
+        "Body text": ai_data['body_text'],
+        "Slug": ai_data['slug'],
+        "Tags": ai_data['tags'],
+        "Status": "выполнено"  # Простой текст, не Single select
+    }
+    
+    result = update_row(row["id"], update_data)
+    
+    if result.status_code == 200:
+        print(f"✅ Строка {row['id']} успешно обновлена!")
+        print(f"   - Title: {ai_data['title'][:40]}...")
+        print(f"   - Status: выполнено")
     else:
-        print(f"❌ Не удалось обновить статус")
+        print(f"❌ Ошибка обновления: {result.status_code}")
+        print(f"   Ответ: {result.text[:200]}")
     
     print("=" * 50)
     print("🏁 PUBLISHER FINISHED")
