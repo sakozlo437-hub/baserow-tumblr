@@ -3,85 +3,77 @@ import os
 import json
 
 print("=" * 60)
-print("🚀 PUBLISHER STARTED (ДИАГНОСТИКА)")
+print("🚀 DIAGNOSTIC MODE")
 print("=" * 60)
 
 TOKEN = os.environ.get("BASEROW_TOKEN")
 TABLE_ID = os.environ.get("BASEROW_TABLE_ID")
 
-print(f"BASEROW_TOKEN: {'✅ ЕСТЬ' if TOKEN else '❌ НЕТ'}")
-print(f"BASEROW_TABLE_ID: {'✅ ЕСТЬ' if TABLE_ID else '❌ НЕТ'}")
+print(f"TOKEN: {'✅' if TOKEN else '❌'}")
+print(f"TABLE_ID: {'✅' if TABLE_ID else '❌'}")
 
 if not TOKEN or not TABLE_ID:
     exit(1)
 
 API_URL = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/"
-HEADERS = {
-    "Authorization": f"Token {TOKEN}",
-    "Content-Type": "application/json"
-}
+HEADERS = {"Authorization": f"Token {TOKEN}", "Content-Type": "application/json"}
 
-# 1. Получаем список строк
-print("\n📡 1. ПОЛУЧАЮ СПИСОК СТРОК...")
+# 1. ПОЛУЧАЕМ ВСЕ СТРОКИ
+print("\n📡 1. GET /rows/")
 params = {"user_field_names": "true", "size": 5}
-response = requests.get(API_URL, headers=HEADERS, params=params)
+resp = requests.get(API_URL, headers=HEADERS, params=params)
+print(f"Status: {resp.status_code}")
 
-print(f"Статус ответа: {response.status_code}")
-
-if response.status_code != 200:
-    print(f"Ошибка: {response.text}")
+if resp.status_code != 200:
+    print(f"Error: {resp.text}")
     exit(1)
 
-rows = response.json().get("results", [])
-print(f"Найдено строк: {len(rows)}")
+rows = resp.json().get("results", [])
+print(f"Total rows: {len(rows)}")
 
-# 2. Ищем первую строку с пустым Status
-target_row = None
+# 2. ИЩЕМ ПУСТУЮ СТРОКУ
+target = None
 for row in rows:
     status = row.get("Status")
-    print(f"\n--- Строка ID: {row.get('id')} ---")
-    print(f"Start text: {row.get('Start text', '')[:60]}...")
-    print(f"Status: '{status}' (тип: {type(status).__name__})")
+    print(f"\n--- Row {row.get('id')} ---")
+    print(f"Status: '{status}' (type: {type(status).__name__})")
+    print(f"Start text: {row.get('Start text', '')[:50]}")
     
     if status is None or status == "":
-        target_row = row
-        print("👉 ЭТА СТРОКА БУДЕТ ОБНОВЛЕНА")
+        target = row
+        print("👉 THIS ROW WILL BE UPDATED")
         break
 
-if not target_row:
-    print("\n❌ Нет строк с пустым Status")
+if not target:
+    print("\n❌ No empty rows")
     exit(0)
 
-# 3. Обновляем строку
-print(f"\n📝 2. ОБНОВЛЯЮ СТРОКУ ID: {target_row['id']}")
+# 3. ОБНОВЛЯЕМ СТРОКУ
+print(f"\n📝 2. PATCH /rows/{target['id']}/")
+update_data = {"Status": "выполнено"}
+print(f"Payload: {json.dumps(update_data, ensure_ascii=False)}")
 
-update_data = {
-    "Status": "выполнено"
-}
+patch_resp = requests.patch(
+    f"{API_URL}{target['id']}/",
+    headers=HEADERS,
+    json=update_data
+)
 
-print(f"Отправляю данные: {json.dumps(update_data, ensure_ascii=False)}")
+print(f"Status: {patch_resp.status_code}")
 
-update_url = f"{API_URL}{target_row['id']}/"
-update_response = requests.patch(update_url, headers=HEADERS, json=update_data)
-
-print(f"Статус обновления: {update_response.status_code}")
-
-if update_response.status_code == 200:
-    print("✅ УСПЕШНО ОБНОВЛЕНО!")
-    print(f"Ответ от Baserow: {json.dumps(update_response.json(), ensure_ascii=False, indent=2)}")
+if patch_resp.status_code == 200:
+    print("✅ UPDATE SUCCESSFUL")
+    print(f"Response: {json.dumps(patch_resp.json(), ensure_ascii=False, indent=2)}")
 else:
-    print(f"❌ ОШИБКА: {update_response.text}")
+    print(f"❌ UPDATE FAILED: {patch_resp.text}")
 
-# 4. Проверяем, что статус действительно изменился
-print("\n🔍 3. ПРОВЕРЯЮ, ИЗМЕНИЛСЯ ЛИ СТАТУС...")
-check_response = requests.get(API_URL, headers=HEADERS, params={"user_field_names": "true"})
-check_rows = check_response.json().get("results", [])
-
-for row in check_rows:
-    if row['id'] == target_row['id']:
-        print(f"Текущий Status в Baserow: '{row.get('Status')}'")
+# 4. ПРОВЕРЯЕМ
+print("\n🔍 3. VERIFYING...")
+check = requests.get(API_URL, headers=HEADERS, params={"user_field_names": "true"})
+for row in check.json().get("results", []):
+    if row["id"] == target["id"]:
+        print(f"Current Status in Baserow: '{row.get('Status')}'")
         break
 
 print("\n" + "=" * 60)
-print("🏁 FINISH")
-print("=" * 60)
+print("🏁 DONE")
