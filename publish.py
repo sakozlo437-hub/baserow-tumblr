@@ -3,6 +3,7 @@ import os
 import json
 import re
 import time
+import traceback
 
 print("=" * 60)
 print("🚀 AI CONTENT GENERATOR (Gemma 4) + File Upload")
@@ -51,13 +52,7 @@ def call_ai(start_text):
     "body_text": "2-3 эмоциональных предложения в стиле 'кусочек лета', про посадку и настроение",
     "slug": "транслит-латиницей-через-дефисы",
     "tags": "5-8 тегов через запятую на английском"
-}}
-
-Пример: 
-{{"title": "🔥 Bohemian Waters Cheeky Bottoms — идеальная посадка", 
-"body_text": "☀️ Эти боттомы — любовь с первой примерки! Не врезаются, сидят как влитые. Pure beach happiness ✨",
-"slug": "bohemian-waters-cheeky-bottoms-l", 
-"tags": "boho swimwear, cheeky bikini, summer vacation, beach outfit"}}"""
+}}"""
 
     try:
         response = requests.post(
@@ -98,13 +93,13 @@ def call_ai(start_text):
     except Exception as e:
         print(f"⚠️ Ошибка: {e}")
     
-    # Заглушка при ошибке
+    # Заглушка
     print("⚠️ Использую локальную заглушку")
     return {
         "title": f"✨ {start_text[:50]}",
-        "body_text": f"Feeling like a little piece of summer! ☀️\n\n{start_text[:100]}...\n\nPerfect fit, nothing digs in, nothing slips — just pure beach happiness! ✨",
+        "body_text": f"Feeling like a little piece of summer! ☀️\n\n{start_text[:100]}...",
         "slug": re.sub(r'[^a-z0-9-]', '-', start_text[:50].lower().replace(' ', '-')),
-        "tags": "summer, beach, fashion, swimwear, vacation, style, bikini"
+        "tags": "summer, beach, fashion, swimwear"
     }
 
 def download_image(image_url):
@@ -114,33 +109,30 @@ def download_image(image_url):
         response = requests.get(image_url, timeout=30)
         
         if response.status_code == 200:
-            # Определяем расширение файла
             content_type = response.headers.get('content-type', '')
             ext = 'jpg'
             if 'png' in content_type:
                 ext = 'png'
             elif 'webp' in content_type:
                 ext = 'webp'
-            elif 'gif' in content_type:
-                ext = 'gif'
             
             filename = f"image_{int(time.time())}_{hash(image_url) % 10000}.{ext}"
-            image_data = response.content
-            print(f"✅ Скачано: {filename} ({len(image_data)} bytes)")
-            return filename, image_data
+            print(f"✅ Скачано: {filename} ({len(response.content)} bytes)")
+            return filename, response.content
         else:
-            print(f"⚠️ Не удалось скачать: статус {response.status_code}")
+            print(f"⚠️ Ошибка скачивания: {response.status_code}")
             return None, None
     except Exception as e:
-        print(f"⚠️ Ошибка скачивания: {e}")
+        print(f"⚠️ Ошибка: {e}")
         return None, None
 
 def upload_image_to_baserow(row_id, filename, image_data):
     """Загружает изображение в поле Image data (тип File) в Baserow"""
     try:
-        print(f"📤 Загружаю изображение в Baserow (тип File)...")
-        upload_url = "https://api.baserow.io/api/user-files/upload-file/"
+        print(f"📤 Загружаю изображение в Baserow...")
         
+        # Загружаем файл
+        upload_url = "https://api.baserow.io/api/user-files/upload-file/"
         files = {'file': (filename, image_data, 'image/jpeg')}
         
         response = requests.post(
@@ -149,40 +141,51 @@ def upload_image_to_baserow(row_id, filename, image_data):
             files=files
         )
         
-        if response.status_code == 200:
-            file_info = response.json()[0]
-            print(f"✅ Изображение загружено на сервер Baserow")
-            
-            # Обновляем поле Image data (тип File)
-            update_data = {f"field_{FIELD_IDS['Image data']}": [file_info]}
-            patch_resp = requests.patch(
-                f"{API_URL}{row_id}/",
-                headers=HEADERS,
-                json=update_data
-            )
-            
-            if patch_resp.status_code == 200:
-                print("✅ Поле Image data обновлено (файл сохранён в Baserow)")
-                return True
-            else:
-                print(f"⚠️ Ошибка обновления: {patch_resp.status_code}")
-                return False
-        else:
-            print(f"⚠️ Ошибка загрузки файла: {response.status_code}")
+        print(f"📡 Статус загрузки: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"⚠️ Ошибка: {response.text[:200]}")
             return False
+        
+        file_info = response.json()
+        print(f"✅ Файл загружен: {file_info}")
+        
+        # Baserow может вернуть список или объект
+        if isinstance(file_info, list):
+            file_data = file_info[0]
+        else:
+            file_data = file_info
+        
+        # Обновляем поле
+        update_data = {f"field_{FIELD_IDS['Image data']}": [file_data]}
+        
+        patch_resp = requests.patch(
+            f"{API_URL}{row_id}/",
+            headers=HEADERS,
+            json=update_data
+        )
+        
+        print(f"📡 Статус обновления: {patch_resp.status_code}")
+        
+        if patch_resp.status_code == 200:
+            print("✅ Image data обновлён!")
+            return True
+        else:
+            print(f"⚠️ Ошибка: {patch_resp.text[:200]}")
+            return False
+            
     except Exception as e:
         print(f"⚠️ Ошибка: {e}")
+        traceback.print_exc()
         return False
 
 # ========== ОСНОВНАЯ ЛОГИКА ==========
 
-# 1. Поиск строки с пустым Status
 print("\n📡 Поиск строки с пустым Status...")
 resp = requests.get(API_URL, headers=HEADERS, params={"size": 10})
 
 if resp.status_code != 200:
-    print(f"❌ Ошибка API Baserow: {resp.status_code}")
-    print(f"Ответ: {resp.text[:200]}")
+    print(f"❌ Ошибка API: {resp.status_code}")
     exit(1)
 
 rows = resp.json().get("results", [])
@@ -201,14 +204,13 @@ if not target:
     print("❌ Нет строк для обработки")
     exit(0)
 
-# 2. Получаем данные
 start_text = target.get(f"field_{FIELD_IDS['Start text']}", "")
 start_image_url = target.get(f"field_{FIELD_IDS['Start image']}", "")
 
 print(f"\n📝 Start text: {start_text[:100]}...")
 print(f"🖼️ Start image: {start_image_url[:80]}...")
 
-# 3. Генерация контента через ИИ
+# Генерация контента
 ai_data = call_ai(start_text)
 
 print(f"\n📊 Результаты ИИ:")
@@ -217,8 +219,8 @@ print(f"   Body: {ai_data.get('body_text', '')[:80]}...")
 print(f"   Slug: {ai_data.get('slug', '')}")
 print(f"   Tags: {ai_data.get('tags', '')}")
 
-# 4. Обновляем текстовые поля
-print(f"\n📝 Обновляю текстовые поля в Baserow...")
+# Обновляем текстовые поля
+print(f"\n📝 Обновляю текстовые поля...")
 
 update_data = {
     f"field_{FIELD_IDS['Title']}": ai_data.get("title", ""),
@@ -231,12 +233,12 @@ update_data = {
 patch_resp = requests.patch(f"{API_URL}{target['id']}/", headers=HEADERS, json=update_data)
 
 if patch_resp.status_code != 200:
-    print(f"❌ Ошибка обновления: {patch_resp.text}")
+    print(f"❌ Ошибка: {patch_resp.text}")
     exit(1)
 
 print("✅ Текстовые поля обновлены")
 
-# 5. Обработка изображения (скачиваем и загружаем в Image data как файл)
+# Обработка изображения
 print(f"\n📸 Обработка изображения...")
 
 if start_image_url:
@@ -249,5 +251,5 @@ else:
     print("⚠️ Нет URL изображения")
 
 print("\n" + "=" * 60)
-print("🏁 ГОТОВО! Изображение сохранено в Baserow (без внешней ссылки)")
+print("🏁 ГОТОВО!")
 print("=" * 60)
