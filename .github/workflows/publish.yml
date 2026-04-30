@@ -26,3 +26,4 @@ jobs:
         env:
           BASEROW_TOKEN: ${{ secrets.BASEROW_TOKEN }}
           BASEROW_TABLE_ID: ${{ secrets.BASEROW_TABLE_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
