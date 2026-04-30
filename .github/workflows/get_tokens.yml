@@ -1,0 +1,26 @@
+name: Get Tumblr Tokens
+
+on:
+  workflow_dispatch:
+
+jobs:
+  get_tokens:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install requests_oauthlib
+      
+      - name: Get tokens
+        run: python get_tumblr_tokens.py
+        env:
+          TUMBLR_CONSUMER_KEY: ${{ secrets.TUMBLR_CONSUMER_KEY }}
+          TUMBLR_CONSUMER_SECRET: ${{ secrets.TUMBLR_CONSUMER_SECRET }}
