@@ -3,10 +3,10 @@ import os
 import json
 import re
 import time
-from requests_oauthlib import OAuth1
+import pytumblr
 
 print("=" * 60)
-print("🚀 AI CONTENT GENERATOR + Tumblr Poster")
+print("🚀 AI CONTENT GENERATOR + Tumblr Poster (pytumblr)")
 print("=" * 60)
 
 # Диагностика секретов
@@ -32,10 +32,32 @@ if not all([TOKEN, TABLE_ID, OPENROUTER_API_KEY]):
     print("\n❌ Ошибка: не все секреты Baserow/OpenRouter настроены")
     exit(1)
 
+# Инициализация Tumblr клиента
+tumblr_client = None
+if all([TUMBLR_CONSUMER_KEY, TUMBLR_CONSUMER_SECRET, TUMBLR_ACCESS_TOKEN, TUMBLR_ACCESS_SECRET]):
+    tumblr_client = pytumblr.TumblrRestClient(
+        TUMBLR_CONSUMER_KEY,
+        TUMBLR_CONSUMER_SECRET,
+        TUMBLR_ACCESS_TOKEN,
+        TUMBLR_ACCESS_SECRET
+    )
+    print("\n✅ Tumblr клиент инициализирован")
+    
+    # Проверяем подключение
+    try:
+        info = tumblr_client.info()
+        if info.get('blog'):
+            print(f"✅ Подключено к блогу: {info['blog']['title']}")
+            print(f"   Постов: {info['blog']['posts']}")
+        else:
+            print(f"⚠️ Ответ: {info}")
+    except Exception as e:
+        print(f"⚠️ Ошибка: {e}")
+
 API_URL = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/"
 HEADERS = {"Authorization": f"Token {TOKEN}", "Content-Type": "application/json"}
 
-# ID полей из твоей таблицы Baserow
+# ID полей
 FIELD_IDS = {
     "Start text": 8259553,
     "Start image": 8259554,
@@ -56,21 +78,17 @@ def call_ai(start_text):
     
     prompt = f"""Ты SEO-специалист для fashion-ритейлера. Создай контент для товара: "{start_text}"
 
-Ответь ТОЛЬКО в формате JSON (без пояснений):
-{{
-    "title": "SEO заголовок до 65 символов с 1-2 эмодзи",
-    "body_text": "2-3 эмоциональных предложения в стиле 'кусочек лета', про посадку и настроение",
-    "slug": "транслит-латиницей-через-дефисы",
-    "tags": "5-8 тегов через запятую на английском"
-}}"""
+Ответь ТОЛЬКО в формате JSON:
+{{"title":"...", "body_text":"...", "slug":"...", "tags":"..."}}
+title: до 65 символов с эмодзи
+body_text: 2-3 эмоциональных предложения
+slug: латиница-дефисы
+tags: 5 тегов через запятую"""
 
     try:
         response = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
             json={
                 "model": "google/gemma-4-31b-it:free",
                 "messages": [{"role": "user", "content": prompt}],
@@ -80,12 +98,8 @@ def call_ai(start_text):
             timeout=60
         )
         
-        print(f"📡 OpenRouter ответ: {response.status_code}")
-        
         if response.status_code == 200:
             content = response.json()["choices"][0]["message"]["content"]
-            print(f"✅ Получен ответ от ИИ")
-            
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
             if json_match:
                 result = json.loads(json_match.group())
@@ -95,45 +109,25 @@ def call_ai(start_text):
                     "slug": result.get("slug", "").lower().replace("_", "-"),
                     "tags": result.get("tags", "")
                 }
-            else:
-                raise Exception("JSON не найден")
-        else:
-            print(f"⚠️ Ошибка API: {response.status_code}")
-            
     except Exception as e:
         print(f"⚠️ Ошибка: {e}")
     
-    # Заглушка при ошибке
-    print("⚠️ Использую локальную заглушку")
+    # Заглушка
     return {
         "title": f"✨ {start_text[:50]}",
-        "body_text": f"Feeling like a little piece of summer! ☀️\n\n{start_text[:100]}...\n\nPerfect fit, nothing digs in, nothing slips — just pure beach happiness! ✨",
+        "body_text": f"Feeling like a little piece of summer! ☀️\n\n{start_text[:100]}...",
         "slug": re.sub(r'[^a-z0-9-]', '-', start_text[:50].lower().replace(' ', '-')),
-        "tags": "summer, beach, fashion, swimwear, vacation, style, bikini"
+        "tags": "summer, beach, fashion, swimwear"
     }
 
 def download_image(image_url):
-    """Скачивает изображение по URL"""
+    """Скачивает изображение"""
     try:
-        print(f"📸 Скачиваю: {image_url[:80]}...")
         response = requests.get(image_url, timeout=30)
-        
         if response.status_code == 200:
-            content_type = response.headers.get('content-type', '')
-            ext = 'jpg'
-            if 'png' in content_type:
-                ext = 'png'
-            elif 'webp' in content_type:
-                ext = 'webp'
-            elif 'gif' in content_type:
-                ext = 'gif'
-            
-            filename = f"image_{int(time.time())}_{hash(image_url) % 10000}.{ext}"
-            print(f"✅ Скачано: {filename} ({len(response.content)} bytes)")
+            filename = f"image_{int(time.time())}.jpg"
             return filename, response.content
-        else:
-            print(f"⚠️ Ошибка скачивания: {response.status_code}")
-            return None, None
+        return None, None
     except Exception as e:
         print(f"⚠️ Ошибка: {e}")
         return None, None
@@ -141,18 +135,12 @@ def download_image(image_url):
 def upload_image_to_baserow(row_id, filename, image_data):
     """Загружает изображение в Baserow"""
     try:
-        print(f"📤 Загружаю в Baserow...")
         upload_url = "https://api.baserow.io/api/user-files/upload-file/"
         files = {'file': (filename, image_data, 'image/jpeg')}
         
-        response = requests.post(
-            upload_url,
-            headers={"Authorization": f"Token {TOKEN}"},
-            files=files
-        )
+        response = requests.post(upload_url, headers={"Authorization": f"Token {TOKEN}"}, files=files)
         
         if response.status_code != 200:
-            print(f"⚠️ Ошибка загрузки: {response.status_code}")
             return None
         
         file_info = response.json()
@@ -162,181 +150,80 @@ def upload_image_to_baserow(row_id, filename, image_data):
             file_data = file_info
         
         update_data = {f"field_{FIELD_IDS['Image data']}": [file_data]}
-        patch_resp = requests.patch(f"{API_URL}{row_id}/", headers=HEADERS, json=update_data)
-        
-        if patch_resp.status_code == 200:
-            print("✅ Image data обновлён")
-            return file_data.get("url")
-        else:
-            print(f"⚠️ Ошибка обновления: {patch_resp.status_code}")
-            return None
+        requests.patch(f"{API_URL}{row_id}/", headers=HEADERS, json=update_data)
+        return file_data.get("url")
     except Exception as e:
         print(f"⚠️ Ошибка: {e}")
         return None
 
-def post_to_tumblr(title, body, tags, slug, link, image_url):
-    """Отправляет пост в Tumblr с исправленной OAuth авторизацией"""
-    if not all([TUMBLR_CONSUMER_KEY, TUMBLR_ACCESS_TOKEN, TUMBLR_BLOG_NAME]):
-        print("⚠️ Tumblr секреты не настроены, пропускаем публикацию")
+def post_to_tumblr(title, body, tags, image_url, link):
+    """Отправляет пост в Tumblr через pytumblr"""
+    if not tumblr_client:
         return None
     
-    print(f"\n📝 Отправляю пост в Tumblr...")
-    print(f"   Блог: {TUMBLR_BLOG_NAME}")
-    print(f"   Title: {title[:50]}...")
+    # Получаем имя блога без .tumblr.com
+    blog_name = TUMBLR_BLOG_NAME.replace("https://", "").replace("http://", "").strip("/")
+    if blog_name.endswith('.tumblr.com'):
+        blog_name = blog_name.replace('.tumblr.com', '')
     
-    # Очищаем название блога (убираем https:// если есть)
-    blog = TUMBLR_BLOG_NAME.replace("https://", "").replace("http://", "").strip("/")
-    
-    # Формируем тело поста
+    # Формируем HTML
     html_body = f"""
-    <div style="max-width:540px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,Roboto,Helvetica,Arial,sans-serif;">
+    <div style="max-width:540px;margin:0 auto;">
         <h2>{title}</h2>
         <img src="{image_url}" style="width:100%;border-radius:12px;margin-bottom:16px;">
         <p>{body}</p>
-        <p style="margin-top:16px;">
-            <a href="{link}" style="background:#000;color:#fff;padding:10px 20px;border-radius:30px;text-decoration:none;display:inline-block;">🛍️ Buy Now</a>
-        </p>
+        <p><a href="{link}" style="background:#000;color:#fff;padding:10px 20px;border-radius:30px;text-decoration:none;">🛍️ Buy Now</a></p>
     </div>
     """
     
-    # Создаём OAuth 1.0 сессию с правильными параметрами
-    oauth = OAuth1(
-        TUMBLR_CONSUMER_KEY,
-        client_secret=TUMBLR_CONSUMER_SECRET,
-        resource_owner_key=TUMBLR_ACCESS_TOKEN,
-        resource_owner_secret=TUMBLR_ACCESS_SECRET,
-        signature_method='HMAC-SHA1',
-        signature_type='auth_header'
-    )
-    
-    # 1. Сначала проверим авторизацию через получение информации о блоге
-    test_url = f"https://api.tumblr.com/v2/blog/{blog}/info"
-    print(f"\n🔍 Проверяем авторизацию...")
-    
     try:
-        test_response = requests.get(test_url, auth=oauth)
-        print(f"📡 Тестовый запрос /info: {test_response.status_code}")
+        result = tumblr_client.create_text(
+            blog_name,
+            title=title[:100],
+            body=html_body,
+            tags=tags[:200],
+            slug=title[:50].lower().replace(' ', '-'),
+            state="published"
+        )
         
-        if test_response.status_code != 200:
-            print(f"⚠️ Ошибка авторизации: {test_response.text[:200]}")
-            
-            # Пробуем другой формат блога
-            blog = blog.replace(".tumblr.com", "")
-            test_url2 = f"https://api.tumblr.com/v2/blog/{blog}/info"
-            test_response2 = requests.get(test_url2, auth=oauth)
-            print(f"📡 Тест с блогом '{blog}': {test_response2.status_code}")
-            
-            if test_response2.status_code != 200:
-                print("❌ Не удалось авторизоваться. Проверьте токены.")
-                return None
-    except Exception as e:
-        print(f"⚠️ Ошибка теста: {e}")
-    
-    # 2. Отправляем пост
-    url = f"https://api.tumblr.com/v2/blog/{blog}/post"
-    
-    data = {
-        "type": "text",
-        "title": title[:100],
-        "body": html_body,
-        "tags": tags[:200],
-        "slug": slug[:50],
-        "state": "published"
-    }
-    
-    print(f"\n📡 Отправляю пост...")
-    
-    try:
-        response = requests.post(url, auth=oauth, data=data)
-        print(f"📡 Tumblr ответ: {response.status_code}")
-        
-        if response.status_code == 201:
-            result = response.json()
-            post_url = result["response"]["post_url"]
-            print(f"✅ Пост опубликован: {post_url}")
+        if result and result.get('id'):
+            post_url = f"https://{blog_name}.tumblr.com/post/{result['id']}"
             return post_url
-        else:
-            print(f"⚠️ Ошибка: {response.text[:500]}")
-            
-            # Пробуем как photo post
-            print("\n📸 Пробую отправить как photo post...")
-            
-            img_response = requests.get(image_url, timeout=30)
-            if img_response.status_code == 200:
-                files = {'data': ('image.jpg', img_response.content, 'image/jpeg')}
-                photo_data = {
-                    "type": "photo",
-                    "caption": f"{title}\n\n{body}\n\n🔗 {link}",
-                    "tags": tags[:200],
-                    "slug": slug[:50],
-                    "state": "published"
-                }
-                
-                response2 = requests.post(url, auth=oauth, data=photo_data, files=files)
-                print(f"📡 Photo post ответ: {response2.status_code}")
-                
-                if response2.status_code == 201:
-                    result = response2.json()
-                    post_url = result["response"]["post_url"]
-                    print(f"✅ Пост с фото опубликован: {post_url}")
-                    return post_url
-                else:
-                    print(f"⚠️ Ошибка photo post: {response2.text[:200]}")
-            
-            return None
-            
+        return None
     except Exception as e:
-        print(f"⚠️ Ошибка: {e}")
+        print(f"⚠️ Ошибка Tumblr: {e}")
         return None
 
 # ========== ОСНОВНАЯ ЛОГИКА ==========
 
 def main():
-    # 1. Поиск строки с пустым Status
     print("\n📡 Поиск строки с пустым Status...")
     resp = requests.get(API_URL, headers=HEADERS, params={"size": 10})
     
     if resp.status_code != 200:
-        print(f"❌ Ошибка API Baserow: {resp.status_code}")
-        print(f"Ответ: {resp.text[:200]}")
+        print(f"❌ Ошибка: {resp.status_code}")
         exit(1)
     
     rows = resp.json().get("results", [])
-    print(f"Найдено строк: {len(rows)}")
     
     target = None
     for row in rows:
-        status_value = row.get(f"field_{FIELD_IDS['Status']}")
-        print(f"  Row {row['id']}: Status = '{status_value}'")
-        if status_value in (None, ""):
+        if row.get(f"field_{FIELD_IDS['Status']}") in (None, ""):
             target = row
-            print(f"  👉 Будет обработана")
             break
     
     if not target:
         print("❌ Нет строк для обработки")
         exit(0)
     
-    # 2. Получаем данные из строки
     start_text = target.get(f"field_{FIELD_IDS['Start text']}", "")
     start_image_url = target.get(f"field_{FIELD_IDS['Start image']}", "")
     link = target.get(f"field_{FIELD_IDS['Link']}", "")
     
-    print(f"\n📝 Start text: {start_text[:100]}...")
-    print(f"🖼️ Start image: {start_image_url[:80]}...")
-    
-    # 3. Генерация контента через ИИ
+    # Генерация контента
     ai_data = call_ai(start_text)
     
-    print(f"\n📊 Результаты ИИ:")
-    print(f"   Title: {ai_data.get('title', '')[:60]}")
-    print(f"   Body: {ai_data.get('body_text', '')[:80]}...")
-    print(f"   Slug: {ai_data.get('slug', '')}")
-    print(f"   Tags: {ai_data.get('tags', '')}")
-    
-    # 4. Обновляем текстовые поля и статус (промежуточный)
-    print(f"\n📝 Обновляю текстовые поля в Baserow...")
-    
+    # Обновляем текстовые поля
     update_data = {
         f"field_{FIELD_IDS['Title']}": ai_data.get("title", ""),
         f"field_{FIELD_IDS['Body text']}": ai_data.get("body_text", ""),
@@ -345,62 +232,34 @@ def main():
         f"field_{FIELD_IDS['Status']}": "выполнено"
     }
     
-    patch_resp = requests.patch(f"{API_URL}{target['id']}/", headers=HEADERS, json=update_data)
+    requests.patch(f"{API_URL}{target['id']}/", headers=HEADERS, json=update_data)
     
-    if patch_resp.status_code != 200:
-        print(f"❌ Ошибка обновления: {patch_resp.text}")
-        exit(1)
-    
-    print("✅ Текстовые поля обновлены")
-    
-    # 5. Обработка изображения
-    print(f"\n📸 Обработка изображения...")
-    image_url_for_tumblr = None
-    
+    # Обработка изображения
+    image_url_for_post = start_image_url
     if start_image_url:
         filename, image_data = download_image(start_image_url)
         if image_data:
-            image_url_for_tumblr = upload_image_to_baserow(target['id'], filename, image_data)
-            if image_url_for_tumblr:
-                print(f"✅ Изображение загружено в Baserow")
-            else:
-                print("⚠️ Не удалось загрузить изображение в Baserow")
-        else:
-            print("⚠️ Изображение не скачано")
-    else:
-        print("⚠️ Нет URL изображения в поле Start image")
+            uploaded_url = upload_image_to_baserow(target['id'], filename, image_data)
+            if uploaded_url:
+                image_url_for_post = uploaded_url
     
-    # 6. Отправка в Tumblr
-    tumblr_post_url = post_to_tumblr(
-        title=ai_data.get("title", ""),
-        body=ai_data.get("body_text", ""),
-        tags=ai_data.get("tags", ""),
-        slug=ai_data.get("slug", ""),
-        link=link,
-        image_url=image_url_for_tumblr or start_image_url
-    )
-    
-    # 7. Сохраняем URL поста
-    if tumblr_post_url:
-        # Обновляем отдельную колонку с URL поста
-        update_tumblr = {f"field_{FIELD_IDS['Tumblr post URL']}": tumblr_post_url}
-        tumblr_resp = requests.patch(f"{API_URL}{target['id']}/", headers=HEADERS, json=update_tumblr)
+    # Отправка в Tumblr
+    if tumblr_client:
+        post_url = post_to_tumblr(
+            title=ai_data.get("title", ""),
+            body=ai_data.get("body_text", ""),
+            tags=ai_data.get("tags", ""),
+            image_url=image_url_for_post,
+            link=link
+        )
         
-        if tumblr_resp.status_code == 200:
-            print("✅ URL поста сохранён в колонку Tumblr post URL")
+        if post_url:
+            update_tumblr = {f"field_{FIELD_IDS['Tumblr post URL']}": post_url}
+            requests.patch(f"{API_URL}{target['id']}/", headers=HEADERS, json=update_tumblr)
             
-            # Обновляем статус на "размещено"
             update_status = {f"field_{FIELD_IDS['Status']}": "размещено"}
             requests.patch(f"{API_URL}{target['id']}/", headers=HEADERS, json=update_status)
-            print("✅ Статус обновлён на 'размещено'")
-        else:
-            print(f"⚠️ Ошибка сохранения URL: {tumblr_resp.status_code}")
-    else:
-        print("⚠️ Пост не опубликован, URL не сохранён")
-    
-    print("\n" + "=" * 60)
-    print("🏁 ВСЁ ГОТОВО!")
-    print("=" * 60)
+            print(f"✅ Пост опубликован: {post_url}")
 
 if __name__ == "__main__":
     main()
