@@ -18,8 +18,8 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install requests
-        run: pip install requests
+      - name: Install dependencies
+        run: pip install requests oauthlib requests-oauthlib
       
       - name: Run script
         run: python publish.py
