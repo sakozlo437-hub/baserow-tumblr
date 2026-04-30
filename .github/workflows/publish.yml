@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
       
       - name: Install dependencies
-        run: pip install requests oauthlib requests-oauthlib
+        run: pip install requests oauthlib requests-oauthlib pytumblr
       
       - name: Run script
         run: python publish.py
